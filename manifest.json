@@ -1,0 +1,10 @@
+{
+	"manifest_version": 3,
+	"name": "Youtube Live Subtitle",
+	"description": "An extension that generates subtitles based on the audio of YouTube streams.",
+	"version": "0.1",
+	"action": {
+		"default_popup": "main.html",
+		"default_icon": "yt-live-sub.png"
+	}
+}
