@@ -1,2 +1,4 @@
 src/whisper_onnx/large-v2
+src/whisper_onnx/medium.en
+src/whisper_onnx/small.en
 src/ort/
