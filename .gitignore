@@ -1,2 +1,2 @@
-src/whisper_onnx/
+src/whisper_onnx/large-v2
 src/ort/
