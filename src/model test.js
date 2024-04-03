@@ -1,12 +1,6 @@
-const extractFeaturesFromAudio = async (audioFile) => {
-    // 오디오 데이터 가져오기
-    const audioContext = new AudioContext();
-    const arrayBuffer = await readFileAsArrayBuffer(audioFile);
-    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+let encoder, decoder;
 
-    // 오디오 데이터 전처리
-    const audioData = audioBuffer.getChannelData(0); // 단일 채널 데이터만 사용
-    const sampleRate = audioBuffer.sampleRate;
+const extractFeaturesFromAudio = async (audioData, sampleRate) => {
     if (sampleRate !== 16000) {
         audioData = resampleAudio(audioData, sampleRate, 16000); // 16kHz로 리샘플링
     }
@@ -82,7 +76,7 @@ function melFilterBank(spectrum, sampleRate, nfft, melBins) {
 }
 
 // 인코더 모델 실행 
-const runEncoder = async (features, encoder) => {
+const runEncoder = async (features) => {
     const n_layer_cross_k = encoder.run(features, encoder.outputNames[0]);
     const n_layer_cross_v = encoder.run(features, encoder.outputNames[1]);
 
@@ -143,8 +137,8 @@ const detectLanguage = async (encoder, decoder) => {
 }
 
 // 모델 실행 및 출력 렌더링
-const transcribe = async (audioFile, encoder, decoder, isMultilingual) => {
-    const features = await extractFeaturesFromAudio(audioFile);
+const transcribe = async (audioBuffer, sampleRate, isMultilingual) => {
+    const features = await extractFeaturesFromAudio(audioBuffer, sampleRate);
 
     const [n_layer_cross_k, n_layer_cross_v] = await runEncoder(features, encoder);
 
@@ -170,14 +164,49 @@ async function loadModels() {
 
 	// ================== TINY ==================
 	const encoderBuffer = await (await fetch(model_dir + '/' + model + '-encoder.int8.onnx')).arrayBuffer()
-	const encoder = await ort.InferenceSession.create(encoderBuffer, opt);
+	encoder = await ort.InferenceSession.create(encoderBuffer, opt);
 
 	const decoderBuffer = await (await fetch(model_dir + '/' + model + '-decoder.int8.onnx')).arrayBuffer()
-	const decoder = await ort.InferenceSession.create(decoderBuffer, opt);
+	decoder = await ort.InferenceSession.create(decoderBuffer, opt);
 	
 	console.log("모델 로딩 완료됨")
-
-	result = transcribe("sample/harvard.wav", encoder, decoder, false)
 }
+
+var reader = new FileReader();
+reader.onload = function(e) {
+    audioContext.decodeAudioData(e.target.result, function(audioData) {
+        let audio;
+        if (audioData.numberOfChannels === 2) {
+            const SCALING_FACTOR = Math.sqrt(2);
+
+            let left = audioData.getChannelData(0);
+            let right = audioData.getChannelData(1);
+
+            audio = new Float32Array(left.length);
+            for (let i = 0; i < audioData.length; ++i) {
+                audio[i] = SCALING_FACTOR * (left[i] + right[i]) / 2;
+            }
+        } else {
+            // If the audio is not stereo, we can just use the first channel:
+            audio = audioData.getChannelData(0);
+        }
+        console.log("오디오 로딩 완료")
+
+        transcribe(audio, audioData.sampleRate, true)
+    }, function(e) {
+        console.log("오디오 파일 분석 중 오류 발생:", e);
+    });
+};
+
+var audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+document.getElementById('audioUpload').addEventListener('change', function(e) {
+    var file = e.target.files[0];
+    if (!file) {
+        return;
+    }
+
+    reader.readAsArrayBuffer(file);
+});
 
 loadModels()
