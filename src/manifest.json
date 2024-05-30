@@ -12,10 +12,19 @@
 	},
 	"web_accessible_resources": [
 		{
-			"resources": ["model.html"],
+			"resources": ["model.html", "ort/ort.webgpu.min.js"],
 			"matches": ["<all_urls>"]
 		}
 	],
+	"content_scripts": [
+		{
+		  "matches": ["https://www.youtube.com/*"],
+		  "js": ["content.js"]
+		}
+	],
+	"background": {
+		"service_worker": "background.js"
+	},
 	"content_security_policy": {
 		"sandbox": "sandbox allow-scripts; script-src 'unsafe-eval' blob:; worker-src 'self' blob:"
 	},

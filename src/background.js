@@ -1,6 +1,6 @@
+
 function log(i) { 
-    document.getElementById('status').innerText += `\n[${performance.now().toFixed(2)}] ` + i; 
-    // console.log(`[${performance.now().toFixed(2)}]`)
+    console.log(`[${performance.now().toFixed(2)}]`)
 }
 
 const kSampleRate = 16000;
@@ -203,3 +203,21 @@ async function transcribe_file() {
         ready();
     }
 }
+
+async function init() {
+	try {
+	  await loadScript(chrome.runtime.getURL('ort/ort.webgpu.min.js'));
+	  // ort 객체가 전역 범위에 로드됨
+	  console.log('ORT loaded:', ort);
+	  // 여기에 ort를 사용하는 코드 작성
+	} catch (error) {
+	  console.error('Failed to load ORT:', error);
+	}
+}
+
+// background.js
+chrome.runtime.onInstalled.addListener(() => {
+	console.log('Extension installed.');
+	init();
+});
+  
