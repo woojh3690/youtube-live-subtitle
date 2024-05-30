@@ -3,3 +3,4 @@ src/whisper_onnx/medium.en
 src/whisper_onnx/small.en
 src/ort/
 test.py
+src/whisper_onnx/whisper_cpu_int8_cpu-cpu_model.onnx
