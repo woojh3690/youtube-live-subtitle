@@ -1,7 +1,7 @@
 console.log("확장 프로그램 실행됨")
 
-function log(i) { 
-    document.getElementById('status').innerText += `\n[${performance.now().toFixed(2)}] ` + i; 
+function log(i) {
+    document.getElementById('status').innerText += `\n[${performance.now().toFixed(2)}] ` + i;
     // console.log(`[${performance.now().toFixed(2)}]`)
 }
 
@@ -73,17 +73,6 @@ document.addEventListener("DOMContentLoaded", function () {
                 log(`Error: ${e}`);
             }
         });
-
-        context = new AudioContext({
-            sampleRate: kSampleRate,
-            channelCount: 1,
-            echoCancellation: false,
-            autoGainControl: true,
-            noiseSuppression: true,
-        });
-        if (!context) {
-            throw new Error("no AudioContext, make sure domain has access to Microphone");
-        }
     } catch (e) {
         log(`Error: ${e}`);
     }

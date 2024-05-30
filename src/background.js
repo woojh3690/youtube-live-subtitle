@@ -1,5 +1,5 @@
 
-function log(i) { 
+function log(i) {
     console.log(`[${performance.now().toFixed(2)}]`)
 }
 
@@ -12,10 +12,6 @@ const kModel = "whisper_onnx/whisper_cpu_int8_cpu-cpu_model.onnx";
 // ort session
 let sess;
 
-// audio context
-var context = null;
-let mediaRecorder;
-
 // stats
 let total_processing_time = 0;
 let total_processing_count = 0;
@@ -24,68 +20,6 @@ let total_processing_count = 0;
 let record;
 let transcribe;
 let progress;
-let audio_src;
-
-// transcribe active
-function busy() {
-    transcribe.disabled = true;
-    progress.parentNode.style.display = "block";
-    document.getElementById("outputText").value = "";
-    document.getElementById('latency').innerText = "";
-}
-
-// transcribe done
-function ready() {
-    transcribe.disabled = false;
-    progress.style.width = "0%";
-    progress.parentNode.style.display = "none";
-}
-
-// called when document is loaded
-document.addEventListener("DOMContentLoaded", function () {
-    audio_src = document.querySelector('audio');
-    record = document.getElementById('record');
-    transcribe = document.getElementById('transcribe');
-    progress = document.getElementById('progress');
-    transcribe.disabled = true;
-    progress.parentNode.style.display = "none";
-
-    // click on Transcribe
-    transcribe.addEventListener("click", () => {
-        transcribe_file();
-    });
-
-    // drop file
-    document.getElementById("file-upload").onchange = function (evt) {
-        let target = evt.target || window.event.src, files = target.files;
-        audio_src.src = URL.createObjectURL(files[0]);
-    }
-
-    log("loading model");
-    try {
-        sess = new Whisper(kModel, (e) => {
-            if (e === undefined) {
-                log(`${kModel} loaded, ${ort.env.wasm.numThreads} threads`);
-                ready();
-            } else {
-                log(`Error: ${e}`);
-            }
-        });
-
-        context = new AudioContext({
-            sampleRate: kSampleRate,
-            channelCount: 1,
-            echoCancellation: false,
-            autoGainControl: true,
-            noiseSuppression: true,
-        });
-        if (!context) {
-            throw new Error("no AudioContext, make sure domain has access to Microphone");
-        }
-    } catch (e) {
-        log(`Error: ${e}`);
-    }
-});
 
 // wrapper around onnxruntime and model
 class Whisper {
@@ -134,7 +68,8 @@ function update_status(t) {
     total_processing_time += t;
     total_processing_count += 1;
     const avg = 1000 * 30 * total_processing_count / total_processing_time;
-    document.getElementById('latency').innerText = `${avg.toFixed(1)} x realtime`;
+    // document.getElementById('latency').innerText = `${avg.toFixed(1)} x realtime`;
+    console.log(avg)
 }
 
 function sleep(ms) {
@@ -166,14 +101,12 @@ async function process_audio(audio, starttime, idx, pos) {
             process_audio(audio, starttime, idx + kSteps, pos + 30);
         } catch (e) {
             log(`Error: ${e}`);
-            ready();
         }
     } else {
         // done with audio buffer
         const processing_time = ((performance.now() - starttime) / 1000);
         const total = (audio.length / kSampleRate);
         log(`${document.getElementById('latency').innerText}, total ${processing_time.toFixed(1)}sec for ${total.toFixed(1)}sec`);
-        ready();
     }
 }
 
@@ -184,7 +117,6 @@ async function transcribe_file() {
         return;
     }
 
-    busy();
     log("start transcribe ...");
     try {
         const buffer = await (await fetch(audio_src.src)).arrayBuffer();
@@ -200,24 +132,36 @@ async function transcribe_file() {
     }
     catch (e) {
         log(`Error: ${e}`);
-        ready();
     }
 }
 
-async function init() {
-	try {
-	  await loadScript(chrome.runtime.getURL('ort/ort.webgpu.min.js'));
-	  // ort 객체가 전역 범위에 로드됨
-	  console.log('ORT loaded:', ort);
-	  // 여기에 ort를 사용하는 코드 작성
-	} catch (error) {
-	  console.error('Failed to load ORT:', error);
-	}
+function loadScript(url, callback) {
+    const script = document.createElement('script');
+    script.src = url;
+    script.onload = callback;
+    script.onerror = () => console.error(`Failed to load script: ${url}`);
+    document.head.appendChild(script);
 }
 
-// background.js
-chrome.runtime.onInstalled.addListener(() => {
-	console.log('Extension installed.');
-	init();
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.action === 'loadORT') {
+        loadScript(chrome.runtime.getURL('libs/ort.webgpu.min.js'), () => {
+            console.log('ORT loaded:', ort);
+            sendResponse({ status: 'ORT loaded' });
+        });
+        return true; // 비동기 sendResponse 사용을 위해 true 반환
+    }
 });
-  
+
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.action === 'startTranscription') {
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            chrome.tabs.sendMessage(tabs[0].id, { action: 'initAudioContext' });
+        });
+        sendResponse({ status: 'started' });
+    } else if (message.action === 'processAudio') {
+        process_audio(message.audioData, performance.now(), 0, 0);
+    }
+});
+
