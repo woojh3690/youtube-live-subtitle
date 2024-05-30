@@ -1,212 +1,205 @@
-let encoder, decoder;
-
-const extractFeaturesFromAudio = async (audioData, sampleRate) => {
-    if (sampleRate !== 16000) {
-        audioData = resampleAudio(audioData, sampleRate, 16000); // 16kHz로 리샘플링
-    }
-
-    // 멜 스펙트로그램 계산
-    const frameSize = 800; // 25ms
-    const hopSize = 320; // 10ms
-    const nfft = 1024;
-    const melBins = 80;
-
-    const melSpectrogram = [];
-    for (let i = 0; i + frameSize < audioData.length; i += hopSize) {
-        const frame = audioData.slice(i, i + frameSize);
-        const fft = new FFT(nfft);
-        const spectrum = fft.forward(frame);
-        const melSpectrum = melFilterBank(spectrum, sampleRate, nfft, melBins);
-        melSpectrogram.push(melSpectrum);
-    }
-
-    const features = torch.tensor(melSpectrogram).transpose(0, 1).unsqueeze(0);
-
-    // 패딩 및 크기 조정
-    const targetLength = 3000;
-    if (features.shape[2] > targetLength) {
-        features = features.slice(0, 0, targetLength - 50).padEnd(50, 0);
-    } else {
-        features = features.padEnd(targetLength, 0);
-    }
-
-    return features;
+function log(i) { 
+    document.getElementById('status').innerText += `\n[${performance.now().toFixed(2)}] ` + i; 
+    // console.log(`[${performance.now().toFixed(2)}]`)
 }
 
-function readFileAsArrayBuffer(file) {
-    console.log(file)
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsArrayBuffer(file);
+const kSampleRate = 16000;
+const kIntervalAudio_ms = 1000;
+const kSteps = kSampleRate * 30;
+const kDelay = 100;
+const kModel = "whisper_onnx/whisper_cpu_int8_cpu-cpu_model.onnx";
+
+// ort session
+let sess;
+
+// audio context
+var context = null;
+let mediaRecorder;
+
+// stats
+let total_processing_time = 0;
+let total_processing_count = 0;
+
+// some dom shortcuts
+let record;
+let transcribe;
+let progress;
+let audio_src;
+
+// transcribe active
+function busy() {
+    transcribe.disabled = true;
+    progress.parentNode.style.display = "block";
+    document.getElementById("outputText").value = "";
+    document.getElementById('latency').innerText = "";
+}
+
+// transcribe done
+function ready() {
+    transcribe.disabled = false;
+    progress.style.width = "0%";
+    progress.parentNode.style.display = "none";
+}
+
+// called when document is loaded
+document.addEventListener("DOMContentLoaded", function () {
+    audio_src = document.querySelector('audio');
+    record = document.getElementById('record');
+    transcribe = document.getElementById('transcribe');
+    progress = document.getElementById('progress');
+    transcribe.disabled = true;
+    progress.parentNode.style.display = "none";
+
+    // click on Transcribe
+    transcribe.addEventListener("click", () => {
+        transcribe_file();
     });
-}
 
-function resampleAudio(audioData, srcRate, targetRate) {
-    const ratio = targetRate / srcRate;
-    const newLength = Math.round(audioData.length * ratio);
-    const newData = new Float32Array(newLength);
-
-    let accumulator = 0;
-    let srcIndex = 0;
-    let dstIndex = 0;
-
-    while (dstIndex < newLength) {
-        const nextSrcIndex = Math.floor(((dstIndex + 1) * srcRate) / targetRate);
-        const weightSum = nextSrcIndex - srcIndex;
-
-        for (let i = srcIndex; i < nextSrcIndex; i++) {
-            const weight = 1 - (i - srcIndex) / weightSum;
-            accumulator += audioData[i] * weight;
-        }
-
-        newData[dstIndex] = accumulator;
-        accumulator = 0;
-        srcIndex = nextSrcIndex;
-        dstIndex++;
+    // drop file
+    document.getElementById("file-upload").onchange = function (evt) {
+        let target = evt.target || window.event.src, files = target.files;
+        audio_src.src = URL.createObjectURL(files[0]);
     }
 
-    return newData;
-}
-
-function melFilterBank(spectrum, sampleRate, nfft, melBins) {
-    // 멜 필터뱅크 로직 구현
-    return melSpectrum;
-}
-
-// 인코더 모델 실행 
-const runEncoder = async (features) => {
-    const n_layer_cross_k = encoder.run(features, encoder.outputNames[0]);
-    const n_layer_cross_v = encoder.run(features, encoder.outputNames[1]);
-
-    return [n_layer_cross_k, n_layer_cross_v];
-}
-
-// 디코더 모델 실행
-const runDecoder = async (tokens, encoder, decoder) => {
-    // 캐시 초기화
-    const [n_layer_self_k_cache, n_layer_self_v_cache] = getInitialCache(decoder);
-
-    let offset = 0;
-    let results = [];
-
-    while (true) {
-        const [logits, n_layer_self_k_cache, n_layer_self_v_cache] = decoder.run([
-            decoder.outputNames[0],
-            decoder.outputNames[1],
-            decoder.outputNames[2]
-        ], {
-            tokens,
-            n_layer_self_k_cache,
-            n_layer_self_v_cache,
-            n_layer_cross_k,
-            n_layer_cross_v,
-            offset
+    log("loading model");
+    try {
+        sess = new Whisper(kModel, (e) => {
+            if (e === undefined) {
+                log(`${kModel} loaded, ${ort.env.wasm.numThreads} threads`);
+                ready();
+            } else {
+                log(`Error: ${e}`);
+            }
         });
 
-        offset += tokens.length;
-
-        const maxTokenId = getMaxTokenId(logits, decoder);
-        results.push(maxTokenId);
-
-        if (maxTokenId === decoder.eotToken) {
-            break;
+        context = new AudioContext({
+            sampleRate: kSampleRate,
+            channelCount: 1,
+            echoCancellation: false,
+            autoGainControl: true,
+            noiseSuppression: true,
+        });
+        if (!context) {
+            throw new Error("no AudioContext, make sure domain has access to Microphone");
         }
+    } catch (e) {
+        log(`Error: ${e}`);
+    }
+});
 
-        tokens = [maxTokenId];
+// wrapper around onnxruntime and model
+class Whisper {
+    constructor(url, cb) {
+        ort.env.logLevel = "error";
+        this.sess = null;
+
+        // semi constants that we initialize once and pass to every run() call
+        this.min_length = Int32Array.from({ length: 1 }, () => 1);
+        this.max_length = Int32Array.from({ length: 1 }, () => 448);
+        this.num_return_sequences = Int32Array.from({ length: 1 }, () => 1);
+        this.length_penalty = Float32Array.from({ length: 1 }, () => 1.);
+        this.repetition_penalty = Float32Array.from({ length: 1 }, () => 1.);
+        this.attention_mask = Int32Array.from({ length: 1 * 80 * 3000 }, () => 0);
+
+        const opt = {
+            executionProviders: ["wasm"],
+            logSeverityLevel: 3,
+            logVerbosityLevel: 3,
+        };
+        ort.InferenceSession.create(url, opt).then((s) => {
+            this.sess = s;
+            cb();
+        }, (e) => { cb(e); })
     }
 
-    return results;
-}
-
-// 언어 감지 (다국어 모델의 경우)
-const detectLanguage = async (encoder, decoder) => {
-    // 특징 추출
-    const dummyFeatures = await extractDummyFeatures();
-
-    const [n_layer_cross_k, n_layer_cross_v] = await runEncoder(dummyFeatures, encoder);
-
-    // 언어 토큰 확인하여 언어 감지
-    const langTokens = getAllLanguageTokens(decoder);
-    const langLogits = decoder.run(decoder.startSequence, n_layer_cross_k, n_layer_cross_v);
-
-    const detectedLangId = getMaxValueIndex(langLogits, langTokens);
-
-    return decoder.getLangFromId(detectedLangId);
-}
-
-// 모델 실행 및 출력 렌더링
-const transcribe = async (audioBuffer, sampleRate, isMultilingual) => {
-    const features = await extractFeaturesFromAudio(audioBuffer, sampleRate);
-
-    const [n_layer_cross_k, n_layer_cross_v] = await runEncoder(features, encoder);
-
-    let language;
-    if (isMultilingual) {
-        language = await detectLanguage(encoder, decoder);
-    }
-
-    const tokens = await runDecoder(getInitialSequence(decoder, language), encoder, decoder);
-
-    const text = decodeTokens(tokens, decoder.tokenTable);
-
-    renderOutput(text);
-}
-
-async function loadModels() {
-	model = "medium.en"
-	model_dir = "whisper_onnx/" + model
-
-	const opt = {
-		executionProviders: ["wasm"]
-	};
-
-	// ================== TINY ==================
-	const encoderBuffer = await (await fetch(model_dir + '/' + model + '-encoder.int8.onnx')).arrayBuffer()
-	encoder = await ort.InferenceSession.create(encoderBuffer, opt);
-
-	const decoderBuffer = await (await fetch(model_dir + '/' + model + '-decoder.int8.onnx')).arrayBuffer()
-	decoder = await ort.InferenceSession.create(decoderBuffer, opt);
-	
-	console.log("모델 로딩 완료됨")
-}
-
-var reader = new FileReader();
-reader.onload = function(e) {
-    audioContext.decodeAudioData(e.target.result, function(audioData) {
-        let audio;
-        if (audioData.numberOfChannels === 2) {
-            const SCALING_FACTOR = Math.sqrt(2);
-
-            let left = audioData.getChannelData(0);
-            let right = audioData.getChannelData(1);
-
-            audio = new Float32Array(left.length);
-            for (let i = 0; i < audioData.length; ++i) {
-                audio[i] = SCALING_FACTOR * (left[i] + right[i]) / 2;
-            }
-        } else {
-            // If the audio is not stereo, we can just use the first channel:
-            audio = audioData.getChannelData(0);
+    async run(audio_pcm, beams = 1) {
+        // clone semi constants into feed. The clone is needed if we run with ort.env.wasm.proxy=true
+        const feed = {
+            "audio_pcm": audio_pcm,
+            "max_length": new ort.Tensor(new Int32Array(this.max_length), [1]),
+            "min_length": new ort.Tensor(new Int32Array(this.min_length), [1]),
+            "num_beams": new ort.Tensor(Int32Array.from({ length: 1 }, () => beams), [1]),
+            "num_return_sequences": new ort.Tensor(new Int32Array(this.num_return_sequences), [1]),
+            "length_penalty": new ort.Tensor(new Float32Array(this.length_penalty), [1]),
+            "repetition_penalty": new ort.Tensor(new Float32Array(this.repetition_penalty), [1]),
+            // "attention_mask": new ort.Tensor(new Int32Array(this.attention_mask), [1, 80, 3000]),
         }
-        console.log("오디오 로딩 완료")
 
-        transcribe(audio, audioData.sampleRate, true)
-    }, function(e) {
-        console.log("오디오 파일 분석 중 오류 발생:", e);
-    });
-};
+        return this.sess.run(feed);
+    }
+}
 
-var audioContext = new (window.AudioContext || window.webkitAudioContext)();
+// report progress
+function update_status(t) {
+    total_processing_time += t;
+    total_processing_count += 1;
+    const avg = 1000 * 30 * total_processing_count / total_processing_time;
+    document.getElementById('latency').innerText = `${avg.toFixed(1)} x realtime`;
+}
 
-document.getElementById('audioUpload').addEventListener('change', function(e) {
-    var file = e.target.files[0];
-    if (!file) {
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// process audio buffer
+async function process_audio(audio, starttime, idx, pos) {
+    if (idx < audio.length) {
+        // not done
+        try {
+            // update progress bar
+            progress.style.width = (idx * 100 / audio.length).toFixed(1) + "%";
+            progress.textContent = progress.style.width;
+            await sleep(kDelay);
+
+            // run inference for 30 sec
+            const xa = audio.slice(idx, idx + kSteps);
+            const start = performance.now();
+            const ret = await sess.run(new ort.Tensor(xa, [1, xa.length]));
+            const diff = performance.now() - start;
+            update_status(diff);
+
+            // append results to textarea 
+            const textarea = document.getElementById('outputText');
+            textarea.value += `${ret.str.data[0]}\n`;
+            textarea.scrollTop = textarea.scrollHeight;
+            await sleep(kDelay);
+            process_audio(audio, starttime, idx + kSteps, pos + 30);
+        } catch (e) {
+            log(`Error: ${e}`);
+            ready();
+        }
+    } else {
+        // done with audio buffer
+        const processing_time = ((performance.now() - starttime) / 1000);
+        const total = (audio.length / kSampleRate);
+        log(`${document.getElementById('latency').innerText}, total ${processing_time.toFixed(1)}sec for ${total.toFixed(1)}sec`);
+        ready();
+    }
+}
+
+// transcribe audio source
+async function transcribe_file() {
+    if (audio_src.src == "") {
+        log("Error: set some Audio input");
         return;
     }
 
-    reader.readAsArrayBuffer(file);
-});
-
-loadModels()
+    busy();
+    log("start transcribe ...");
+    try {
+        const buffer = await (await fetch(audio_src.src)).arrayBuffer();
+        const audioBuffer = await context.decodeAudioData(buffer);
+        var offlineContext = new OfflineAudioContext(audioBuffer.numberOfChannels, audioBuffer.length, audioBuffer.sampleRate);
+        var source = offlineContext.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(offlineContext.destination);
+        source.start();
+        const renderedBuffer = await offlineContext.startRendering();
+        const audio = renderedBuffer.getChannelData(0);
+        process_audio(audio, performance.now(), 0, 0);
+    }
+    catch (e) {
+        log(`Error: ${e}`);
+        ready();
+    }
+}
