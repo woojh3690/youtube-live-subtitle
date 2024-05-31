@@ -14,7 +14,7 @@ function log(i) {
 
 const kSampleRate = 16000;
 const kIntervalAudio_ms = 1000;
-const kSteps = kSampleRate * 30;
+const kSteps = kSampleRate * 3;
 const kDelay = 100;
 const kModel = "whisper_onnx/whisper_cpu_int8_cpu-cpu_model.onnx";
 
