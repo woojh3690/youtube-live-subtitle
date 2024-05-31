@@ -34,7 +34,7 @@ async function initAudioContext(videoElement) {
         }
 
         // 오디오 컨텍스트를 생성합니다.
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const audioContext = new window.AudioContext({ sampleRate: 16000 });
         const sourceNode = audioContext.createMediaElementSource(videoElement);
         await audioContext.audioWorklet.addModule(chrome.runtime.getURL('processor.js'));
         const audioWorkletNode = new AudioWorkletNode(audioContext, 'audio-processor');

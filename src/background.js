@@ -14,7 +14,7 @@ function log(i) {
 
 const kSampleRate = 16000;
 const kIntervalAudio_ms = 1000;
-const kSteps = kSampleRate * 3;
+const kSteps = kSampleRate * 30;
 const kDelay = 100;
 const kModel = "whisper_onnx/whisper_cpu_int8_cpu-cpu_model.onnx";
 
@@ -86,6 +86,8 @@ async function processBufferedAudio(audioData) {
         // run inference for 3 sec
         const ret = await sess.run(new ort.Tensor(audio, [1, audio.length]));
         console.log(`${ret.str.data[0]}\n`)
+
+        audioBuffer = []
     }
 }
 
