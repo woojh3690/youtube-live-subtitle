@@ -1,25 +1,25 @@
+console.log("확장 프로그램 실행됨")
 
+import * as ort from "./ort/esm/ort.webgpu.min.js";
+ort.env.wasm.wasmPaths = "./ort/esm/";
+ort.env.wasm.numThreads=1
+
+// import * as ort from "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0-esmtest.20240513-a16cd2bd21/dist/ort.webgpu.min.js";
+// ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0-esmtest.20240513-a16cd2bd21/dist/";
+
+ort.env.logLevel = "error";
 function log(i) {
-    console.log(`[${performance.now().toFixed(2)}]`)
+    console.log(i)
 }
 
 const kSampleRate = 16000;
 const kIntervalAudio_ms = 1000;
-const kSteps = kSampleRate * 30;
+const kSteps = kSampleRate * 3;
 const kDelay = 100;
 const kModel = "whisper_onnx/whisper_cpu_int8_cpu-cpu_model.onnx";
 
 // ort session
 let sess;
-
-// stats
-let total_processing_time = 0;
-let total_processing_count = 0;
-
-// some dom shortcuts
-let record;
-let transcribe;
-let progress;
 
 // wrapper around onnxruntime and model
 class Whisper {
@@ -63,105 +63,37 @@ class Whisper {
     }
 }
 
-// report progress
-function update_status(t) {
-    total_processing_time += t;
-    total_processing_count += 1;
-    const avg = 1000 * 30 * total_processing_count / total_processing_time;
-    // document.getElementById('latency').innerText = `${avg.toFixed(1)} x realtime`;
-    console.log(avg)
-}
-
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-// process audio buffer
-async function process_audio(audio, starttime, idx, pos) {
-    if (idx < audio.length) {
-        // not done
-        try {
-            // update progress bar
-            progress.style.width = (idx * 100 / audio.length).toFixed(1) + "%";
-            progress.textContent = progress.style.width;
-            await sleep(kDelay);
-
-            // run inference for 30 sec
-            const xa = audio.slice(idx, idx + kSteps);
-            const start = performance.now();
-            const ret = await sess.run(new ort.Tensor(xa, [1, xa.length]));
-            const diff = performance.now() - start;
-            update_status(diff);
-
-            // append results to textarea 
-            const textarea = document.getElementById('outputText');
-            textarea.value += `${ret.str.data[0]}\n`;
-            textarea.scrollTop = textarea.scrollHeight;
-            await sleep(kDelay);
-            process_audio(audio, starttime, idx + kSteps, pos + 30);
-        } catch (e) {
-            log(`Error: ${e}`);
-        }
+// ONNX Runtime 초기화 및 모델 로드
+log("loading model");
+sess = new Whisper(kModel, (e) => {
+    if (e === undefined) {
+        log(`${kModel} loaded, ${ort.env.wasm.numThreads} threads`);
     } else {
-        // done with audio buffer
-        const processing_time = ((performance.now() - starttime) / 1000);
-        const total = (audio.length / kSampleRate);
-        log(`${document.getElementById('latency').innerText}, total ${processing_time.toFixed(1)}sec for ${total.toFixed(1)}sec`);
-    }
-}
-
-// transcribe audio source
-async function transcribe_file() {
-    if (audio_src.src == "") {
-        log("Error: set some Audio input");
-        return;
-    }
-
-    log("start transcribe ...");
-    try {
-        const buffer = await (await fetch(audio_src.src)).arrayBuffer();
-        const audioBuffer = await context.decodeAudioData(buffer);
-        var offlineContext = new OfflineAudioContext(audioBuffer.numberOfChannels, audioBuffer.length, audioBuffer.sampleRate);
-        var source = offlineContext.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(offlineContext.destination);
-        source.start();
-        const renderedBuffer = await offlineContext.startRendering();
-        const audio = renderedBuffer.getChannelData(0);
-        process_audio(audio, performance.now(), 0, 0);
-    }
-    catch (e) {
         log(`Error: ${e}`);
-    }
-}
-
-function loadScript(url, callback) {
-    const script = document.createElement('script');
-    script.src = url;
-    script.onload = callback;
-    script.onerror = () => console.error(`Failed to load script: ${url}`);
-    document.head.appendChild(script);
-}
-
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.action === 'loadORT') {
-        loadScript(chrome.runtime.getURL('libs/ort.webgpu.min.js'), () => {
-            console.log('ORT loaded:', ort);
-            sendResponse({ status: 'ORT loaded' });
-        });
-        return true; // 비동기 sendResponse 사용을 위해 true 반환
     }
 });
 
+// audio buffer
+let audioBuffer = [];
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.action === 'startTranscription') {
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-            chrome.tabs.sendMessage(tabs[0].id, { action: 'initAudioContext' });
-        });
-        sendResponse({ status: 'started' });
-    } else if (message.action === 'processAudio') {
-        process_audio(message.audioData, performance.now(), 0, 0);
+// process audio buffer
+async function processBufferedAudio(audioData) {
+    audioBuffer.push(...Object.values(audioData));
+
+    if (audioBuffer.length >= kSteps) {
+        const audio = new Float32Array(audioBuffer);
+
+        // run inference for 3 sec
+        const ret = await sess.run(new ort.Tensor(audio, [1, audio.length]));
+        console.log(`${ret.str.data[0]}\n`)
     }
+}
+
+chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
+    if (message.action === 'processAudio') {
+        const { audioData } = message;
+        processBufferedAudio(audioData)
+    }
+    return true;
 });
 
