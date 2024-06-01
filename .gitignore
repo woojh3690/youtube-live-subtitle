@@ -1,6 +1,4 @@
-src/whisper_onnx/large-v2
-src/whisper_onnx/medium.en
-src/whisper_onnx/small.en
-src/ort/
+whisper_onnx/
+ort/
 test.py
-src/whisper_onnx/whisper_cpu_int8_cpu-cpu_model.onnx
+
