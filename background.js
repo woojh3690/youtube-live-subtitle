@@ -10,7 +10,7 @@ function log(i) {
 }
 
 const kSampleRate = 16000;
-const kSteps = kSampleRate * 3;
+const kSteps = kSampleRate * 5;
 const kModel = "whisper_onnx/whisper_cpu_int8_cpu-cpu_model.onnx";
 
 // ort session
